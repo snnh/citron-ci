@@ -66,9 +66,24 @@ jobs:
     timeout-minutes: 120
 
     steps:
+      - name: Install Git (for checkout)
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm git
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
+
+      - name: Verify Submodules
+        run: |
+          git config --global --add safe.directory "*"
+          git submodule status
+          if [ ! -f "externals/vcpkg/scripts/buildsystems/vcpkg.cmake" ]; then
+            echo "Submodules not properly initialized, retrying..."
+            git submodule update --init --recursive
+          fi
 
       - name: Install Dependencies
         run: |

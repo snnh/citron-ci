@@ -68,7 +68,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
           persist-credentials: false
+      - name: Verify Submodules
+        shell: bash
+        run: |
+          git submodule status
+          if [ ! -f "externals/vcpkg/scripts/buildsystems/vcpkg.cmake" ]; then
+            echo "Submodules not properly initialized, retrying..."
+            git submodule update --init --recursive
+          fi
       - name: Install Vulkan SDK
         shell: pwsh
         run: |
