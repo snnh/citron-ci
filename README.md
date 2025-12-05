@@ -2,11 +2,11 @@
 
 [![Discord](https://img.shields.io/discord/1325735818714943498?color=5865F2&label=Citron&logo=discord&logoColor=white)](https://discord.gg/citron)
 &nbsp;&nbsp;
-[![Android Build](https://github.com/Zephyron-Dev/Citron-CI/actions/workflows/build-android.yml/badge.svg)](https://github.com/Zephyron-Dev/Citron-CI/actions/workflows/build-android.yml)
+[![Windows Build](https://github.com/snnh/citron-ci/actions/workflows/build-windows.yml/badge.svg)](https://github.com/snnh/citron-ci/actions/workflows/build-windows.yml)
 &nbsp;&nbsp;
-[![Windows Build](https://github.com/Zephyron-Dev/Citron-CI/actions/workflows/build-windows.yml/badge.svg)](https://github.com/Zephyron-Dev/Citron-CI/actions/workflows/build-windows.yml)
+[![Linux Build](https://github.com/snnh/citron-ci/actions/workflows/build-linux.yml/badge.svg)](https://github.com/snnh/citron-ci/actions/workflows/build-linux.yml)
 &nbsp;&nbsp;
-[![Linux Build](https://github.com/Zephyron-Dev/Citron-CI/actions/workflows/build-linux.yml/badge.svg)](https://github.com/Zephyron-Dev/Citron-CI/actions/workflows/build-linux.yml)
+[![Android Build](https://github.com/snnh/citron-ci/actions/workflows/build-android.yml/badge.svg)](https://github.com/snnh/citron-ci/actions/workflows/build-android.yml)
 
 Welcome to **Citron**, a cutting-edge Nintendo Homebrew emulator designed to deliver an optimized experience for playing your favorite games and exploring new ones. Citron is a **high-performance** and **easy-to-use** emulator, tailored for enthusiasts and developers alike.
 

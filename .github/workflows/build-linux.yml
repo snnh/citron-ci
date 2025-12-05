@@ -1,0 +1,225 @@
+name: Build Citron (Linux)
+
+concurrency:
+  group: build-linux-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  check-version:
+    name: Check if new version available
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.compare.outputs.should_build }}
+      new_hash: ${{ steps.upstream.outputs.hash_short }}
+      new_hash_full: ${{ steps.upstream.outputs.hash_full }}
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+      - name: Get upstream commit hash
+        id: upstream
+        run: |
+          REPO_URL="https://git.citron-emu.org/Citron/Emulator.git"
+          BRANCH="fix/audio-biquad-filter-metroid-prime-4"
+          FULL_HASH=$(git ls-remote "$REPO_URL" "refs/heads/$BRANCH" | cut -f1)
+          SHORT_HASH=$(echo "$FULL_HASH" | cut -c1-7)
+          echo "hash_short=$SHORT_HASH" >> $GITHUB_OUTPUT
+          echo "hash_full=$FULL_HASH" >> $GITHUB_OUTPUT
+      - name: Get last built version
+        id: last_built
+        run: |
+          LAST_HASH=$(cat LATEST_VERSION_LINUX 2>/dev/null | tr -d '\n' || echo "none")
+          echo "last_hash=$LAST_HASH" >> $GITHUB_OUTPUT
+      - name: Check if release exists
+        id: release_check
+        run: |
+          if gh release view nightly-linux --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+      - name: Compare versions
+        id: compare
+        run: |
+          if [ "${{ steps.upstream.outputs.hash_short }}" != "${{ steps.last_built.outputs.last_hash }}" ]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          elif [ "${{ steps.release_check.outputs.exists }}" != "true" ]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    name: "Citron Build (Linux - ${{ matrix.arch }})"
+    needs: [check-version]
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    container:
+      image: cachyos/cachyos:latest
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+    timeout-minutes: 120
+
+    steps:
+      - name: Install Dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm alsa-lib base-devel boost boost-libs catch2 cmake curl \
+            ffmpeg fmt fuse2 gamemode gcc gdb git glslang glu libusb libxi libxkbcommon \
+            libxkbcommon-x11 libxss libzip lz4 mbedtls2 mesa nasm ninja nlohmann-json \
+            openal openssl opus perl pipewire-audio pulseaudio pulseaudio-alsa \
+            qt6-base qt6-multimedia qt6-tools qt6-wayland sdl2 sdl2-compat unzip \
+            vulkan-headers vulkan-icd-loader vulkan-mesa-layers wget xcb-util-cursor \
+            xcb-util-image xcb-util-keysyms xcb-util-renderutil xcb-util-wm \
+            xorg-server-xvfb zip zstd zsync
+
+          # Create shasum compatibility script
+          echo '#!/bin/bash' > /usr/local/bin/shasum
+          echo 'if [ "$1" = "-a" ] && [ "$2" = "256" ]; then' >> /usr/local/bin/shasum
+          echo '  shift 2' >> /usr/local/bin/shasum
+          echo '  sha256sum "$@"' >> /usr/local/bin/shasum
+          echo 'else' >> /usr/local/bin/shasum
+          echo '  sha256sum "$@"' >> /usr/local/bin/shasum
+          echo 'fi' >> /usr/local/bin/shasum
+          chmod +x /usr/local/bin/shasum
+
+      - name: Clone Citron Source
+        run: |
+          git clone --recursive -b fix/audio-biquad-filter-metroid-prime-4 \
+            "https://git.citron-emu.org/Citron/Emulator.git" citron
+
+      - name: Get Nightly Version
+        id: version
+        working-directory: ./citron
+        run: |
+          git fetch --tags
+          VERSION=$(git rev-parse --short HEAD)
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Configure CMake
+        working-directory: ./citron
+        run: |
+          # Find Qt private include directory
+          HEADER_PATH=$(pacman -Ql qt6-base | grep 'qpa/qplatformnativeinterface.h$' | awk '{print $2}')
+          if [ -z "$HEADER_PATH" ]; then
+            echo "ERROR: Could not find qplatformnativeinterface.h path."
+            exit 1
+          fi
+          QT_PRIVATE_INCLUDE_DIR=$(dirname "$(dirname "$HEADER_PATH")")
+          echo "Found Qt private include directory: ${QT_PRIVATE_INCLUDE_DIR}"
+
+          mkdir -p build && cd build
+          cmake .. \
+            -G Ninja \
+            -DCMAKE_C_COMPILER=gcc \
+            -DCMAKE_CXX_COMPILER=g++ \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DCITRON_BUILD_TYPE=Nightly \
+            -DCITRON_USE_BUNDLED_VCPKG=OFF \
+            -DUSE_DISCORD_PRESENCE=OFF \
+            -DCITRON_USE_BUNDLED_FFMPEG=OFF \
+            -DCITRON_USE_QT_MULTIMEDIA=OFF \
+            -DCITRON_USE_QT_WEB_ENGINE=OFF \
+            -DCITRON_TESTS=OFF \
+            -DCMAKE_C_FLAGS="-O3 -march=x86-64-v2 -mtune=generic" \
+            -DCMAKE_CXX_FLAGS="-I${QT_PRIVATE_INCLUDE_DIR} -O3 -march=x86-64-v2 -mtune=generic -Wno-error"
+
+      - name: Build Citron
+        working-directory: ./citron/build
+        run: ninja
+
+      - name: Build AppImage
+        working-directory: ./citron
+        run: |
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          export ARCH=x86_64
+          export VERSION=${{ steps.version.outputs.VERSION }}
+          chmod +x AppImage-build-local.sh
+          ./AppImage-build-local.sh || echo "AppImage build completed with warnings"
+
+      - name: Package Linux Build
+        working-directory: ./citron
+        run: |
+          mkdir -p ../dist
+          if [ -f citron.AppImage ]; then
+            mv citron.AppImage ../dist/Citron-linux-nightly-${{ steps.version.outputs.VERSION }}-x86_64.AppImage
+          fi
+
+          # Also create tarball of binaries
+          tar -czf ../dist/Citron-linux-nightly-${{ steps.version.outputs.VERSION }}-x86_64.tar.gz -C build/bin .
+
+      - name: Upload Linux Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Citron-Linux-Nightly-x86_64
+          path: "dist/*"
+
+  release:
+    if: ${{ github.ref_name == 'main' }}
+    name: "Release"
+    needs: [check-version, build]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Citron-Linux-Nightly-x86_64
+          path: .
+      - name: Get Version from Filename
+        shell: bash
+        run: |
+          FILENAME=$(ls Citron-linux-nightly-*-x86_64.AppImage 2>/dev/null || ls Citron-linux-nightly-*-x86_64.tar.gz)
+          VERSION=$(echo "$FILENAME" | sed -E 's/Citron-linux-nightly-(.+)-x86_64\.(AppImage|tar\.gz)/\1/')
+          echo "APP_VERSION=${VERSION}" >> $GITHUB_ENV
+      - name: Delete Previous Release
+        run: gh release delete "nightly-linux" --repo "${{ github.repository }}" --cleanup-tag -y || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set Build Date
+        run: echo "BUILD_DATE=$(date +'%Y-%m-%d')" >> $GITHUB_ENV
+      - name: Release Artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Continuous Build (Linux Nightly: ${{ env.APP_VERSION }})"
+          tag_name: "nightly-linux"
+          prerelease: true
+          files: "Citron-linux-*"
+          body: |
+            **Citron Upstream Commit:** [`${{ needs.check-version.outputs.new_hash }}`](https://git.citron-emu.org/Citron/Emulator/commit/${{ needs.check-version.outputs.new_hash_full }})
+
+            This build is based on the latest Citron emulator source code from the upstream repository.
+
+            **Build Details:**
+            - Platform: Linux (x86_64)
+            - Build Type: Release with Qt6
+            - Date: ${{ env.BUILD_DATE }}
+            - Format: AppImage (portable) + tar.gz (binaries)
+
+            **Running the AppImage:**
+            ```bash
+            chmod +x Citron-linux-nightly-*.AppImage
+            ./Citron-linux-nightly-*.AppImage
+            ```
+      - name: Update LATEST_VERSION
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          echo "${{ env.APP_VERSION }}" > LATEST_VERSION_LINUX
+          git add LATEST_VERSION_LINUX
+          git commit -m "Update LATEST_VERSION_LINUX to ${{ env.APP_VERSION }} [skip ci]" || exit 0
+          for i in {1..5}; do
+            git pull --rebase origin main && git push && break || sleep 2
+          done
+
